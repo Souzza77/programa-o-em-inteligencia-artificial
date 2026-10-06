@@ -1,72 +1,53 @@
-import cv2
-import numpy as np
 import streamlit as st
-from streamlit_webrtc import VideoProcessorBase, webrtc_streamer, WebRtcMode
+import spacy
 from ultralytics import YOLO
+import numpy as np
+from PIL import Image, ImageDraw
 
-# Configuração visual do Streamlit
+# Configuração da página do Streamlit
 st.set_page_config(
-    page_title="Detecção em Tempo Real - Câmera PC",
-    page_icon="📷",
-    layout="wide"
+    page_title="Scanner com Yolo",
+    layout="centered"
 )
 
+# Título principal da interface
+st.title("Scanner com Yolo")
+
+# Otimização do carregamento dos modelos com cache do Streamlit
 @st.cache_resource
-def load_model():
-    """Carrega o modelo YOLOv8 Nano otimizado para inferência em CPU."""
-    return YOLO("yolov8n.pt")
+def load_models():
+    # Carrega o modelo YOLO v8 pequeno pré-treinado
+    yolo_model = YOLO("yolov8n.pt")
+    
+    # Carrega o modelo de processamento de linguagem natural do spaCy
+    try:
+        nlp_model = spacy.load("pt_core_news_sm")
+    except OSError:
+        # Fallback para modelo em inglês caso o em português não esteja disponível
+        nlp_model = spacy.load("en_core_web_sm")
+        
+    return yolo_model, nlp_model
 
-model = load_model()
+# Carregamento dos modelos
+yolo, nlp = load_models()
 
-# Classe de processamento de quadros de vídeo em tempo real
-class RealTimeObjectDetector(VideoProcessorBase):
-    def __init__(self):
-        self.conf_threshold = 0.45
-
-    def recv(self, frame):
-        # Converte o frame do WebRTC para formato array OpenCV (BGR)
-        img = frame.to_ndarray(format="bgr24")
-
-        # Inferência do YOLO em CPU
-        results = model.predict(
-            source=img,
-            conf=self.conf_threshold,
-            device="cpu",
-            verbose=False
-        )
-
-        # Desenha as detecções (boxes, labels e scores) no frame
-        annotated_frame = results[0].plot()
-
-        # Retorna o frame processado de volta para o navegador
-        return frame.from_ndarray(annotated_frame, format="bgr24")
-
-
-# Interface do Streamlit
-st.title("📷 Identificação de Objetos em Tempo Real via Câmera")
-st.markdown(
-    "Teste sua webcam e identifique objetos no ambiente ao vivo utilizando **YOLOv8** e **Streamlit**."
+# Campo de entrada de texto para o usuário solicitar objetos/conceitos
+user_input = st.text_input(
+    "O que você gostaria de ver?",
+    placeholder="Ex: pessoa, carro, cachorro..."
 )
 
-# Controles na barra lateral
-st.sidebar.header("Parâmetros do Detector")
-conf_threshold = st.sidebar.slider(
-    "Limiar de Confiança (Confidence Threshold)",
-    min_value=0.1,
-    max_value=1.0,
-    value=0.45,
-    step=0.05
-)
+# Processamento da entrada do usuário e visualização
+if user_input:
+    # Processa o texto fornecido pelo usuário usando spaCy para extração de lemas/substantivos
+    doc = nlp(user_input.lower())
+    target_terms = [token.lemma_ for token in doc if not token.is_stop and token.is_alpha]
+    
+    st.info(f"Termos identificados para busca: {', '.join(target_terms) if target_terms else user_input}")
 
-# Streamer WebRTC para captura da webcam
-ctx = webrtc_streamer(
-    key="realtime-object-detection",
-    mode=WebRtcMode.SENDRECV,
-    video_processor_factory=RealTimeObjectDetector,
-    media_stream_constraints={"video": True, "audio": False},
-    async_processing=True,
-)
-
-# Atualização dinâmicas do parâmetro de confiança
-if ctx.video_processor:
-    ctx.video_processor.conf_threshold = conf_threshold
+    # Criação/Geração automatizada de uma imagem canvas interativa para inferência
+    canvas_width, canvas_height = 600, 400
+    generated_image = Image.new("RGB", (canvas_width, canvas_height), color=(240, 240, 240))
+    draw = ImageDraw.Draw(generated_image)
+    
+    #
